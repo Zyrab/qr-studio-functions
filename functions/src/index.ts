@@ -12,6 +12,8 @@ setGlobalOptions({
 
 // Import the trial handler
 import { handleTrialStart } from "./handlers/trials";
-
+import { createCheckoutSession } from "./handlers/subscriptions";
+import { getCustomerPortalLink } from "./handlers/portal";
+import { stripeWebhook } from "./handlers/webhook";
 // Export the functions
-export { handleTrialStart };
+export { handleTrialStart, createCheckoutSession, getCustomerPortalLink, stripeWebhook };
