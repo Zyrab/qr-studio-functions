@@ -1,31 +1,51 @@
 import { onRequest } from "firebase-functions/v2/https";
-import Stripe from "stripe";
 import { db } from "../utils/firebase";
 import { Timestamp } from "firebase-admin/firestore";
-import { User } from "../utils/types";
+import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
-  apiVersion: "2026-01-28.clover",
-});
 
-export const stripeWebhook = onRequest(
-  {
-    secrets: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
-    maxInstances: 5,
-  },
-  async (req, res) => {
+/**
+ * HELPER: Safely extract an ID.
+ * Based on your schema, some fields are strings (IDs) and some are objects.
+ */
+const safeId = (field: any): string | null => {
+  if (!field) return null;
+  return typeof field === "string" ? field : field.id;
+};
+
+/**
+ * HELPER: Get end date from a Subscription Object.
+ * SOURCE OF TRUTH: Your schema shows 'current_period_end' is inside 'items.data',
+ * not at the root of the subscription object.
+ */
+const getSubscriptionEnd = (subscription: any): number => {
+  if (subscription.items && subscription.items.data && subscription.items.data.length > 0) {
+    return subscription.items.data[0].current_period_end;
+  }
+  console.warn("⚠️ No items found in subscription. Defaulting to 30 days.");
+  return Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
+};
+
+export const stripeWebhook = onRequest({ secrets: ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]}, async (req, res) => {
     const sig = req.headers["stripe-signature"] as string;
+
+    if (!sig) {
+      res.status(400).send("Missing stripe-signature header");
+      return;
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2026-01-28.clover" });
+
     let event: Stripe.Event;
 
     try {
-      // Use req.rawBody for signature verification
       event = stripe.webhooks.constructEvent(
         req.rawBody,
         sig,
         process.env.STRIPE_WEBHOOK_SECRET || ""
       );
     } catch (err: any) {
-      console.error(`Webhook Signature Error: ${err.message}`);
+      console.error("❌ Signature verification failed:", err.message);
       res.status(400).send(`Webhook Error: ${err.message}`);
       return;
     }
@@ -33,79 +53,101 @@ export const stripeWebhook = onRequest(
     try {
       switch (event.type) {
         case "checkout.session.completed": {
-          const session = event.data.object as Stripe.Checkout.Session;
-          const firebaseUID = session.metadata?.firebaseUID;
+          const session = event.data.object;
+          const uid = session.metadata?.firebaseUID;
+          
+          const subscriptionId = safeId(session.subscription);
+          const customerId = safeId(session.customer);
 
-          if (firebaseUID) {
-            // Subscription details are needed to get the initial period end
-            const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
-            
-            const userRef = db.collection("users").doc(firebaseUID);
-            const updateData: Partial<User> & { updatedAt: Timestamp } = {
-              plan: "paid",
-              subscriptionStatus: "active",
-              // Set paidUntil to the end of the current Stripe period
-              paidUntil: Timestamp.fromMillis(subscription.current_period_end * 1000),
-              qrLimit: 1000,
-              dynamicQrLimit: 1000,
-              updatedAt: Timestamp.now(),
-            };
+          if (!uid) { console.error("❌ No firebaseUID in session metadata"); break;}
+          if (!subscriptionId) { console.error("❌ No subscription ID found in session"); break; }
 
-            await userRef.update(updateData);
-          }
+          // We must fetch the subscription here because the Session object 
+          // doesn't contain the 'items' array needed for the date.
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          
+          const expiresAt = getSubscriptionEnd(subscription);
+
+          await db.collection("users").doc(uid).update({
+            plan: "paid",
+            subscriptionStatus: "active",
+            stripeCustomerId: customerId,
+            trialUsed: true, 
+            paidUntil: Timestamp.fromMillis(expiresAt * 1000),
+            qrLimit: 1000, 
+            dynamicQrLimit: 500,
+          });
+
+          console.log(`✅ User ${uid} upgraded to PRO. Ends: ${expiresAt}`);
           break;
         }
 
         case "invoice.paid": {
-          const invoice = event.data.object as Stripe.Invoice;
-          const subscriptionId = invoice.subscription as string;
+          const invoice = event.data.object
           
-          if (subscriptionId) {
-            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-            const firebaseUID = subscription.metadata?.firebaseUID;
+          if (invoice.billing_reason === 'subscription_create') break; 
+        
+          const customerId = safeId(invoice.customer);
 
-            if (firebaseUID) {
-              const userRef = db.collection("users").doc(firebaseUID);
-              await userRef.update({
-                subscriptionStatus: "active",
-                plan: "paid",
-                // Extend access based on the new invoice period
-                paidUntil: Timestamp.fromMillis(subscription.current_period_end * 1000),
-              });
-            }
+          if (!customerId) { console.error("❌ Missing customer ID in invoice"); break;}
+
+          let expiresAt = 0;
+          
+          if (invoice.lines && invoice.lines.data && invoice.lines.data.length > 0) {
+            expiresAt = invoice.lines.data[0].period.end;
+          } else {
+            expiresAt = Math.floor(Date.now() / 1000) + (30 * 24 * 60 * 60);
           }
+
+          console.log(`Processing Invoice for Customer: ${customerId}`);
+
+          // Find the user by their Stripe ID
+          const usersRef = db.collection("users");
+          const snapshot = await usersRef.where("stripeCustomerId", "==", customerId).limit(1).get();
+
+          if (snapshot.empty) { console.error("❌ No user found for Stripe Customer:", customerId); break; }
+
+          const docId = snapshot.docs[0].id;
+
+          await db.collection("users").doc(docId).update({
+            plan: "paid",
+            subscriptionStatus: "active",
+            paidUntil: Timestamp.fromMillis(expiresAt * 1000),
+          });
+
+          console.log(`✅ User ${docId} renewed until: ${expiresAt}`);
           break;
         }
 
         case "customer.subscription.deleted": {
-          const subscription = event.data.object as Stripe.Subscription;
-          const firebaseUID = subscription.metadata?.firebaseUID;
+          const subscription = event.data.object;
+          const customerId = safeId(subscription.customer);
 
-          if (firebaseUID) {
-            const userRef = db.collection("users").doc(firebaseUID);
-            
-            // Revert to free tier limits
-            const updateData: Partial<User> = {
+          if (!customerId) { console.error("❌ No customer ID in deleted subscription"); break; }
+
+          const usersRef = db.collection("users");
+          const snapshot = await usersRef.where("stripeCustomerId", "==", customerId).limit(1).get();
+
+          if (!snapshot.empty) {
+            const docId = snapshot.docs[0].id;
+            await db.collection("users").doc(docId).update({
               plan: "free",
               subscriptionStatus: "inactive",
               paidUntil: null,
               qrLimit: 10,
-              dynamicQrLimit: 0,
-            };
-
-            await userRef.update(updateData);
+              dynamicQrLimit: 0
+            });
+            console.log(`User ${docId} downgraded`);
           }
           break;
         }
-
-        default:
-          console.log(`Unhandled event type ${event.type}`);
       }
-
-      res.json({ received: true });
-    } catch (error) {
-      console.error("Webhook Processing Error:", error);
-      res.status(500).send("Internal Server Error");
+    } catch (error: any) {
+      console.error("Processing Error:", error);
+      res.json({ received: true, error: error.message }); 
+      return;
     }
+
+    res.json({ received: true });
   }
 );
