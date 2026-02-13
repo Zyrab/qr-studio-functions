@@ -3,19 +3,19 @@ import Stripe from "stripe";
 import { db } from "../utils/firebase";
 import { User } from "../utils/types";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2026-01-28.clover" });
 
 /**
  * Generates a Stripe Billing Portal link for the user to manage 
  * their subscription, payment methods, and invoices.
  */
-export const getCustomerPortalLink = onCall({ enforceAppCheck: false, secrets: ["STRIPE_SECRET_KEY"] }, async (request) => {
-    const { auth } = request;
+export const getCustomerPortalLink = onCall({ enforceAppCheck: false, secrets: ["STRIPE_SECRET_KEY","FRONTEND_URL"] }, async (request) => {
+  const { auth } = request;
     
-    if (!auth) throw new HttpsError("unauthenticated", "User must be logged in.");
-
-    const uid = auth.uid;
-    const userRef = db.collection("users").doc(uid);
+  if (!auth) throw new HttpsError("unauthenticated", "User must be logged in.");
+  
+  const uid = auth.uid;
+  const userRef = db.collection("users").doc(uid);
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2026-01-28.clover" });
 
     try {
       const userSnap = await userRef.get();
@@ -31,10 +31,9 @@ export const getCustomerPortalLink = onCall({ enforceAppCheck: false, secrets: [
         );
       }
 
-      // Create the portal session
       const portalSession = await stripe.billingPortal.sessions.create({
         customer: userData.stripeCustomerId,
-        return_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/dashboard`,
+        return_url: `${process.env.FRONTEND_URL}/dashboard`,
       });
 
       return { url: portalSession.url };
