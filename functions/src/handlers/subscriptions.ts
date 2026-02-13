@@ -3,21 +3,16 @@ import Stripe from "stripe";
 import { db } from "../utils/firebase";
 import { User } from "../utils/types";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2026-01-28.clover" });
 
 
-export const createCheckoutSession = onCall(
-  {
-    enforceAppCheck: false,
-    secrets: ["STRIPE_SECRET_KEY"],
-  },
-  async (request) => {
+export const createCheckoutSession = onCall({ enforceAppCheck: false, secrets: ["STRIPE_SECRET_KEY","FRONTEND_URL","STRIPE_PRICE_ID_EUR"],}, async (request) => {
     const { auth } = request;
     if (!auth) throw new HttpsError("unauthenticated", "User must be logged in.");
-
+    
     const uid = auth.uid;
     const userRef = db.collection("users").doc(uid);
-
+    
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2026-01-28.clover" });
     try {
       const userDoc = await userRef.get();
       if (!userDoc.exists) throw new HttpsError("not-found", "User not found.");
@@ -48,5 +43,4 @@ export const createCheckoutSession = onCall(
       console.error("Checkout Session Error:", error);
       throw new HttpsError("internal", error.message);
     }
-  }
-);
+});
