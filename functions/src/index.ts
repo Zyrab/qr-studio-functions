@@ -15,5 +15,8 @@ import { handleTrialStart } from "./handlers/trials";
 import { createCheckoutSession } from "./handlers/subscriptions";
 import { getCustomerPortalLink } from "./handlers/portal";
 import { stripeWebhook } from "./handlers/webhook";
+import { createUser } from "./handlers/create-user";
+import { createQRCode } from "./handlers/create-qr-code";
+import { redirectQR } from "./handlers/redirect-qr-code";
 // Export the functions
-export { handleTrialStart, createCheckoutSession, getCustomerPortalLink, stripeWebhook };
+export { handleTrialStart, createCheckoutSession, getCustomerPortalLink, stripeWebhook, createUser, createQRCode,redirectQR };
