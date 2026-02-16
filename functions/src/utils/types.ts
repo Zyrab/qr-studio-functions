@@ -39,11 +39,11 @@ export interface QRData {
   name: string;
   content: QRContent;
   design: QRDesign;
+  type: "static" | "dynamic"
 }
 
 export interface QRCodeDocument extends QRData {
   uid: string;
-  type: "static" | "dynamic";
   slug: string | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
