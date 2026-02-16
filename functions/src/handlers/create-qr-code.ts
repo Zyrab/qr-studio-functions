@@ -16,8 +16,9 @@ export const createQRCode = onCall( async (request) => {
   if (!auth) throw new HttpsError("unauthenticated", "User must be logged in.");
 
   const userId = auth.uid;
-  const { name, content, design, type } = request.data as (QRData & { type: "static" | "dynamic" });
+  const { name, content, design, type, qrId } = request.data as (QRData & { qrId: string });
 
+  if (!qrId) throw new HttpsError("invalid-argument", "Missing QR ID.");
   if (!name || !content || !design || !type) throw new HttpsError("invalid-argument", "Missing required QR code data.");
 
   const safeLogoRatio = Math.min(design.logoSizeRatio || 0.15, 0.25);
@@ -63,17 +64,19 @@ export const createQRCode = onCall( async (request) => {
     content,
     design: { ...design, logoSizeRatio: safeLogoRatio },
     type,
-    slug: batchSlug ,
+    slug: batchSlug,
     createdAt: now,
     updatedAt: now,
-    // Add trial expiration if applicable
     trialEndsAt: (user.plan === "trial" && type === "dynamic") 
       ? Timestamp.fromMillis(now.toMillis() + (7 * 24 * 60 * 60 * 1000)) 
       : undefined
   };
 
   try {
-    const userQrRef = db.collection("users").doc(userId).collection("qrcodes").doc();
+    const userQrRef = db.collection("users").doc(userId).collection("qrcodes").doc(qrId);
+
+    const docCheck = await userQrRef.get();
+    if (docCheck.exists) throw new HttpsError("already-exists", "A QR code with this ID already exists.");
     const batch = db.batch();
 
     // Save main user document
@@ -95,7 +98,6 @@ export const createQRCode = onCall( async (request) => {
         createdAt: now
       });
 
-      // Initialize stats with empty structures to prevent FieldValue.increment errors
       batch.set(statsRef, {
         scans: 0,
         lastScannedAt: null,
@@ -109,6 +111,9 @@ export const createQRCode = onCall( async (request) => {
     return { success: true, qrId: userQrRef.id, slug: batchSlug };
     
   } catch (error) {
+    // If it was our specific error, rethrow it so the client sees the message
+    if (error instanceof HttpsError) throw error;
+    
     console.error("Batch write failed:", error);
     throw new HttpsError("internal", "Failed to save QR code and slug data.");
   }
