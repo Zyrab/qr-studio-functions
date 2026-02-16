@@ -59,7 +59,6 @@ export const createQRCode = onCall( async (request) => {
   // else targetUrl = `https://your-domain.com/view/${batchSlug}`;
 
   const newQrDoc: QRCodeDocument = {
-    uid: userId,
     name,
     content,
     design: { ...design, logoSizeRatio: safeLogoRatio },
@@ -69,7 +68,7 @@ export const createQRCode = onCall( async (request) => {
     updatedAt: now,
     trialEndsAt: (user.plan === "trial" && type === "dynamic") 
       ? Timestamp.fromMillis(now.toMillis() + (7 * 24 * 60 * 60 * 1000)) 
-      : undefined
+      : null
   };
 
   try {

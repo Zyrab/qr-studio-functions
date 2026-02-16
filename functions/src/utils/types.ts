@@ -43,9 +43,8 @@ export interface QRData {
 }
 
 export interface QRCodeDocument extends QRData {
-  uid: string;
   slug: string | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
-  trialEndsAt?: Timestamp; 
+  trialEndsAt: Timestamp | null; 
 }
