@@ -41,9 +41,11 @@ export const redirectQR = onRequest( async (req, res) => {
     }
 
     const sanitize = (val: string) => val.replace(/\./g, '_');
+
+    console.log(`[DEBUG HEADERS FOR ${slug}]:`, JSON.stringify(req.headers, null, 2));
     
-    const country = sanitize((req.headers['x-appengine-country'] || 'unknown').toString());
-    const city = sanitize((req.headers['x-appengine-city'] || 'unknown').toString());
+    const country = sanitize((req.headers['x-country-code'] || 'unknown').toString());
+    // const city = sanitize((req.headers['x-appengine-city'] || 'unknown').toString());
     const userAgent = req.get('user-agent') || '';
     
     let os = 'Other';
@@ -59,7 +61,7 @@ export const redirectQR = onRequest( async (req, res) => {
       scans: FieldValue.increment(1),
       lastScannedAt: now,
       [`countries.${country}`]: FieldValue.increment(1),
-      [`cities.${country}.${city}`]: FieldValue.increment(1),
+      // [`cities.${country}.${city}`]: FieldValue.increment(1),
       [`os.${os}`]: FieldValue.increment(1)
     };
 
