@@ -2,12 +2,18 @@ import { onRequest } from "firebase-functions/v2/https";
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { db } from "../utils/firebase";
 
-
 export const redirectQR = onRequest( async (req, res) => {
   const slug = req.path.replace(/^\/+/, '').toLowerCase().trim();
 
-  if (!slug) {
-    res.status(400).send("Invalid QR code identifier.");
+  if (!slug) {    
+    res.redirect(302, 'https://atqr.app');
+    return;
+  }
+
+  const isValidSlug = /^[a-z0-9_-]+$/.test(slug);
+  
+  if (!isValidSlug || slug.length > 15) {
+    res.redirect(302, 'https://atqr.app');
     return;
   }
 
@@ -16,14 +22,13 @@ export const redirectQR = onRequest( async (req, res) => {
     const slugSnap = await slugRef.get();
 
     if (!slugSnap.exists) {
-      res.status(404).send("QR code not found.");
+      res.redirect(302, 'https://atqr.app');
       return;
     }
 
     const qr = slugSnap.data() as any;
     const now = Timestamp.now();
 
-    // 2. Status & Expiration Checks
     if (qr.isActive === false) {
       res.status(403).send("This QR code is inactive.");
       return;
@@ -35,15 +40,12 @@ export const redirectQR = onRequest( async (req, res) => {
       return;
     }
 
-    // 3. Stats Aggregation Logic
-    // Sanitize values to prevent Firestore path errors (dots are not allowed in field names)
     const sanitize = (val: string) => val.replace(/\./g, '_');
     
-    const country = sanitize((req.headers['x-vias-is-country-code'] || 'unknown').toString());
-    const city = sanitize((req.headers['x-vias-is-city'] || 'unknown').toString());
+    const country = sanitize((req.headers['x-appengine-country'] || 'unknown').toString());
+    const city = sanitize((req.headers['x-appengine-city'] || 'unknown').toString());
     const userAgent = req.get('user-agent') || '';
     
-    // Detect OS
     let os = 'Other';
     if (userAgent.includes('Android')) os = 'Android';
     else if (userAgent.includes('iPhone') || userAgent.includes('iPad')) os = 'iOS';
@@ -67,7 +69,6 @@ export const redirectQR = onRequest( async (req, res) => {
 
     const targetUrl = qr.targetUrl || 'https://atqr.app';
     
-    // Disable caching so every scan hits our server
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.redirect(302, targetUrl);
 
