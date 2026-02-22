@@ -1,5 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { Timestamp, FieldValue } from 'firebase-admin/firestore';
+import { Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
 import { db } from "../utils/firebase";
 
 export const redirectQR = onRequest( async (req, res) => {
@@ -34,15 +34,25 @@ export const redirectQR = onRequest( async (req, res) => {
       return;
     }
 
-    if (qr.trialEndsAt && qr.trialEndsAt.toMillis() < now.toMillis()) {
-      await slugRef.update({ isActive: false });
+   if (qr.trialEndsAt && qr.trialEndsAt.toMillis() < now.toMillis()) {
+      const userRef = db.collection('users').doc(qr.uid);
+      await Promise.all([
+        slugRef.update({ isActive: false }),
+        userRef.update({ 
+          plan: "free",
+          subscriptionStatus: "inactive",
+          dynamicQrLimit: 0,
+          trialUsed: true,
+        })
+      ]);
+
+      // 3. Then send the response
       res.status(403).send("The trial for this dynamic QR code has expired.");
       return;
     }
 
     const sanitize = (val: string) => val.replace(/\./g, '_');
 
-    console.log(`[DEBUG HEADERS FOR ${slug}]:`, JSON.stringify(req.headers, null, 2));
     
     const country = sanitize((req.headers['x-country-code'] || 'unknown').toString());
     // const city = sanitize((req.headers['x-appengine-city'] || 'unknown').toString());
@@ -60,20 +70,21 @@ export const redirectQR = onRequest( async (req, res) => {
     const updateData: Record<string, any> = {
       scans: FieldValue.increment(1),
       lastScannedAt: now,
-      [`countries.${country}`]: FieldValue.increment(1),
-      // [`cities.${country}.${city}`]: FieldValue.increment(1),
-      [`os.${os}`]: FieldValue.increment(1)
+      [new FieldPath('countries', country).toString()]: FieldValue.increment(1),
+      [new FieldPath('os', os).toString()]: FieldValue.increment(1)    
     };
 
     statsRef.set(updateData, { merge: true }).catch(e => {
       console.error(`[Stats Error] for slug ${slug}:`, e);
     });
 
+    
     const targetUrl = qr.targetUrl || 'https://atqr.app';
     
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.redirect(302, targetUrl);
 
+    
   } catch (err) {
     console.error("Redirect error:", err);
     res.status(500).send("Internal server error");
