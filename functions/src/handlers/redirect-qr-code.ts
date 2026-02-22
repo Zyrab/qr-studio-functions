@@ -1,5 +1,5 @@
 import { onRequest } from "firebase-functions/v2/https";
-import { Timestamp, FieldValue, FieldPath } from 'firebase-admin/firestore';
+import { Timestamp, FieldValue } from 'firebase-admin/firestore';
 import { db } from "../utils/firebase";
 
 export const redirectQR = onRequest( async (req, res) => {
@@ -70,11 +70,11 @@ export const redirectQR = onRequest( async (req, res) => {
     const updateData: Record<string, any> = {
       scans: FieldValue.increment(1),
       lastScannedAt: now,
-      [new FieldPath('countries', country).toString()]: FieldValue.increment(1),
-      [new FieldPath('os', os).toString()]: FieldValue.increment(1)    
+      [`countries.${country}`]: FieldValue.increment(1),
+      [`os.${os}`]: FieldValue.increment(1)    
     };
 
-    statsRef.set(updateData, { merge: true }).catch(e => {
+    statsRef.update(updateData).catch(e => {
       console.error(`[Stats Error] for slug ${slug}:`, e);
     });
 
